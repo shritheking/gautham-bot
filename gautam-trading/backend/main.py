@@ -11,14 +11,17 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+from pathlib import Path
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 load_dotenv()
 
 class Settings(BaseSettings):
-    supabase_url: str = os.getenv("SUPABASE_URL", "")
-    supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    bot_token: str = os.getenv("BOT_TOKEN", "")
-    admin_telegram_ids: str = os.getenv("ADMIN_TELEGRAM_IDS", "")
-    
+    supabase_url: str = os.getenv("SUPABASE_URL", "https://trvwzyueymbsochgzeix.supabase.co")
+    supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRydnd6eXVleW1ic29jaGd6ZWl4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTczMTIzMiwiZXhwIjoyMTA3MzA3MjMyfQ.v6S2aMdUlID7eUjIT9LiL0Gz0JFlIJsGtUF8w8qP8Xk")
+    bot_token: str = os.getenv("BOT_TOKEN", "8922209875:AAHYofX2CaaL4hDRX28hwi2XJEzDyeYn098")
+    admin_telegram_ids: str = os.getenv("ADMIN_TELEGRAM_IDS", "5188160752")
+
 from contextlib import asynccontextmanager
 import asyncio
 import sys
