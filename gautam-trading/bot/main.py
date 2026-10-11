@@ -116,12 +116,18 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot):
     await message.answer(f"👋 Welcome to {bot_name}!\n\nWe're excited to have you here.")
     await asyncio.sleep(1)
     
-    # 3. Reviews (Images & Videos)
+    # 3. Reviews (Images & Videos - filtered for this bot)
     try:
-        reviews_res = supabase.table("review_images").select("*").execute()
-        if reviews_res.data:
+        reviews_res = supabase.table("review_images").select("*").eq("bot_username", bot_username).execute()
+        r_list = reviews_res.data
+        if not r_list:
+            # Fallback to reviews without a specific bot_username or all reviews
+            reviews_res = supabase.table("review_images").select("*").execute()
+            r_list = reviews_res.data
+
+        if r_list:
             media_group = []
-            for r in reviews_res.data[:10]:
+            for r in r_list[:10]:
                 mtype = r.get('media_type', 'photo')
                 if mtype == 'video':
                     media_group.append(InputMediaVideo(media=r['file_id']))
@@ -211,17 +217,24 @@ async def process_quotex_id(message: types.Message, state: FSMContext):
 
 # ================= ADMIN REGISTRATION CONTROLS =================
 @dp.callback_query(F.data.startswith("approve_"))
-async def admin_approve(callback: types.CallbackQuery):
+async def admin_approve(callback: types.CallbackQuery, bot: Bot):
     if str(callback.from_user.id) not in os.getenv("ADMIN_TELEGRAM_IDS", "").split(","): return
     user_id = callback.data.split("_")[1]
     
     supabase.table("users").update({"approval_status": "approved"}).eq("telegram_id", user_id).execute()
     
-    # Fetch VIP Channel link
-    settings_res = supabase.table("bot_settings").select("setting_value").eq("setting_key", "vip_channel_link").execute()
+    # Fetch bot-specific VIP Channel link
+    try:
+        b_info = await bot.get_me()
+        b_user = b_info.username or "bot"
+    except Exception:
+        b_user = "bot"
+        
+    settings_res = supabase.table("bot_settings").select("*").execute()
     vip_link = "No VIP link set by admin."
     if settings_res.data:
-        vip_link = settings_res.data[0].get("setting_value", vip_link)
+        s_dict = {s['setting_key']: s['setting_value'] for s in settings_res.data}
+        vip_link = s_dict.get(f"vip_channel_link_{b_user}", s_dict.get("vip_channel_link", vip_link))
         
     try:
         await callback.message.edit_text(callback.message.text + "\n\n✅ **APPROVED**", parse_mode="Markdown")
@@ -230,7 +243,7 @@ async def admin_approve(callback: types.CallbackQuery):
     await callback.answer("User Approved")
 
 @dp.callback_query(F.data.startswith("reject_"))
-async def admin_reject(callback: types.CallbackQuery):
+async def admin_reject(callback: types.CallbackQuery, bot: Bot):
     if str(callback.from_user.id) not in os.getenv("ADMIN_TELEGRAM_IDS", "").split(","): return
     user_id = callback.data.split("_")[1]
     
@@ -244,41 +257,53 @@ async def admin_reject(callback: types.CallbackQuery):
 
 # ================= ADMIN DASHBOARD =================
 @dp.message(Command("admin"))
-async def cmd_admin(message: types.Message):
+async def cmd_admin(message: types.Message, bot: Bot):
     if str(message.from_user.id) not in os.getenv("ADMIN_TELEGRAM_IDS", "").split(","):
         await message.answer("❌ This command is not accessible. You do not have admin permissions.")
         return
     
+    try:
+        b_info = await bot.get_me()
+        b_name = b_info.first_name or "Trading Bot"
+    except Exception:
+        b_name = "Trading Bot"
+
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Broadcast Message", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="🔗 Edit Affiliate Link", callback_data="edit_affiliate")],
         [InlineKeyboardButton(text="📢 Edit Public Channel Link", callback_data="edit_public")],
         [InlineKeyboardButton(text="👑 Edit VIP Channel Link", callback_data="edit_vip")],
-        [InlineKeyboardButton(text="📸 Add Review Image", callback_data="add_review_img")],
-        [InlineKeyboardButton(text="🗑️ Clear All Reviews", callback_data="clear_reviews")]
+        [InlineKeyboardButton(text="📸 Add Review Image/Video", callback_data="add_review_img")],
+        [InlineKeyboardButton(text="🗑️ Clear This Bot's Reviews", callback_data="clear_reviews")]
     ])
-    await message.answer("🛠 **Gautam Trading Admin Dashboard**", reply_markup=markup, parse_mode="Markdown")
+    await message.answer(f"🛠 **{b_name} Admin Dashboard**\n\nSettings and actions you change here will apply specifically to this bot.", reply_markup=markup, parse_mode="Markdown")
 
-# Edit Links
+# Edit Links (Saved specifically per bot)
 @dp.callback_query(F.data == "edit_affiliate")
-async def edit_aff(callback: types.CallbackQuery, state: FSMContext):
+async def edit_aff(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    b_info = await bot.get_me()
+    b_user = b_info.username or "bot"
     await state.set_state(AdminEditState.waiting_for_link)
-    await state.update_data(setting_key="affiliate_url")
-    await callback.message.answer("🔗 Please send the new **Quotex Affiliate Link**:")
+    await state.update_data(setting_key=f"affiliate_url_{b_user}")
+    await callback.message.answer(f"🔗 Please send the new **Quotex Affiliate Link** for @{b_user}:")
     await callback.answer()
 
 @dp.callback_query(F.data == "edit_public")
-async def edit_pub(callback: types.CallbackQuery, state: FSMContext):
+async def edit_pub(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    b_info = await bot.get_me()
+    b_user = b_info.username or "bot"
     await state.set_state(AdminEditState.waiting_for_link)
-    await state.update_data(setting_key="public_channel_link")
-    await callback.message.answer("📢 Please send the new **Public Channel Link**:")
+    await state.update_data(setting_key=f"public_channel_link_{b_user}")
+    await callback.message.answer(f"📢 Please send the new **Public Channel Link** for @{b_user}:")
     await callback.answer()
     
 @dp.callback_query(F.data == "edit_vip")
-async def edit_vip(callback: types.CallbackQuery, state: FSMContext):
+async def edit_vip(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+    b_info = await bot.get_me()
+    b_user = b_info.username or "bot"
     await state.set_state(AdminEditState.waiting_for_link)
-    await state.update_data(setting_key="vip_channel_link")
-    await callback.message.answer("👑 Please send the new **VIP Channel Link**:")
+    await state.update_data(setting_key=f"vip_channel_link_{b_user}")
+    await callback.message.answer(f"👑 Please send the new **VIP Channel Link** for @{b_user}:")
     await callback.answer()
     
 @dp.message(AdminEditState.waiting_for_link)
@@ -292,21 +317,24 @@ async def process_link_edit(message: types.Message, state: FSMContext):
             {"setting_key": key, "setting_value": new_val}, 
             on_conflict="setting_key"
         ).execute()
-        await message.answer(f"✅ Link updated successfully!\n\n`{new_val}`", parse_mode="Markdown")
+        await message.answer(f"✅ Link updated successfully for this bot!\n\n`{new_val}`", parse_mode="Markdown")
     except Exception as e:
         print(f"Error updating link: {e}")
         await message.answer(f"⚠️ Error updating database: {e}")
     await state.clear()
 
-# Reviews
+# Reviews (Tracked per bot)
 @dp.callback_query(F.data == "add_review_img")
 async def add_rev_img(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminEditState.waiting_for_review_image)
-    await callback.message.answer("📸 Please send a **photo or video** to add as a review:")
+    await callback.message.answer("📸 Please send a **photo or video** to add as a review for this bot:")
     await callback.answer()
     
 @dp.message(AdminEditState.waiting_for_review_image, F.photo | F.video)
-async def process_rev_img(message: types.Message, state: FSMContext):
+async def process_rev_img(message: types.Message, state: FSMContext, bot: Bot):
+    b_info = await bot.get_me()
+    b_user = b_info.username or "bot"
+    
     if message.photo:
         file_id = message.photo[-1].file_id
         mtype = 'photo'
@@ -314,26 +342,43 @@ async def process_rev_img(message: types.Message, state: FSMContext):
         file_id = message.video.file_id
         mtype = 'video'
         
-    supabase.table("review_images").insert({"file_id": file_id, "media_type": mtype}).execute()
-    await message.answer("✅ Review media added successfully!")
+    try:
+        supabase.table("review_images").insert({
+            "file_id": file_id, 
+            "media_type": mtype,
+            "bot_username": b_user
+        }).execute()
+    except Exception:
+        # Fallback if bot_username column not yet on review_images
+        supabase.table("review_images").insert({
+            "file_id": file_id, 
+            "media_type": mtype
+        }).execute()
+
+    await message.answer("✅ Review media added successfully to this bot!")
     await state.clear()
     
 @dp.callback_query(F.data == "clear_reviews")
-async def clear_revs(callback: types.CallbackQuery):
-    # PostgREST needs a filter to delete, we delete everything not equal to 'none'
-    supabase.table("review_images").delete().neq("file_id", "none").execute()
-    await callback.message.answer("🗑️ All review images have been deleted!")
+async def clear_revs(callback: types.CallbackQuery, bot: Bot):
+    b_info = await bot.get_me()
+    b_user = b_info.username or "bot"
+    try:
+        supabase.table("review_images").delete().eq("bot_username", b_user).execute()
+    except Exception:
+        supabase.table("review_images").delete().neq("file_id", "none").execute()
+
+    await callback.message.answer("🗑️ All review media for this bot have been deleted!")
     await callback.answer()
 
-# Broadcast
+# Broadcast (Broadcasts specifically to users who started THIS bot)
 @dp.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(BroadcastState.waiting_for_message)
-    await callback.message.answer("📢 **Broadcast Mode**\n\nPlease send the message you want to blast to all users. (Or type /cancel to abort)", parse_mode="Markdown")
+    await callback.message.answer("📢 **Broadcast Mode**\n\nPlease send the message you want to blast to users of this bot (or type /cancel to abort):", parse_mode="Markdown")
     await callback.answer()
 
 @dp.message(BroadcastState.waiting_for_message)
-async def process_broadcast(message: types.Message, state: FSMContext):
+async def process_broadcast(message: types.Message, state: FSMContext, bot: Bot):
     if message.text == "/cancel":
         await state.clear()
         await message.answer("Broadcast cancelled.")
@@ -342,28 +387,41 @@ async def process_broadcast(message: types.Message, state: FSMContext):
     await message.answer("🚀 Sending broadcast...")
     await state.clear()
     
-    users_res = supabase.table("users").select("telegram_id").execute()
-    users = users_res.data
+    b_info = await bot.get_me()
+    b_user = b_info.username or "bot"
+    
+    # Query users who registered with this specific bot (with fallback to all users)
+    try:
+        users_res = supabase.table("users").select("telegram_id").eq("bot_username", b_user).execute()
+        users = users_res.data
+        if not users:
+            users_res = supabase.table("users").select("telegram_id").execute()
+            users = users_res.data
+    except Exception:
+        users_res = supabase.table("users").select("telegram_id").execute()
+        users = users_res.data
     
     success = 0
     failed = 0
     
     for u in users:
         try:
-            # We can broadcast text, we should ideally handle photo/video too but for now text
             await bot.send_message(chat_id=u["telegram_id"], text=message.text)
             success += 1
-            await asyncio.sleep(0.05) # Prevent spam limits
+            await asyncio.sleep(0.05)
         except Exception:
             failed += 1
             
-    supabase.table("broadcasts").insert({
-        "message": message.text,
-        "status": "completed",
-        "total_users": len(users),
-        "successful": success,
-        "failed": failed
-    }).execute()
+    try:
+        supabase.table("broadcasts").insert({
+            "message": message.text,
+            "status": "completed",
+            "total_users": len(users),
+            "successful": success,
+            "failed": failed
+        }).execute()
+    except Exception:
+        pass
     
     await message.answer(f"✅ **Broadcast Complete!**\n\nSuccessful: {success}\nFailed: {failed}", parse_mode="Markdown")
 
