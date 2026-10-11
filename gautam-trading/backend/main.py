@@ -30,11 +30,21 @@ from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeCha
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure any previous webhook is deleted so polling receives updates
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        print("Webhook cleared, starting polling mode.")
+    except Exception as e:
+        print(f"Error deleting webhook: {e}")
+
     # Set default commands for everyone
-    await bot.set_my_commands(
-        [BotCommand(command="start", description="Start the bot")],
-        scope=BotCommandScopeDefault()
-    )
+    try:
+        await bot.set_my_commands(
+            [BotCommand(command="start", description="Start the bot")],
+            scope=BotCommandScopeDefault()
+        )
+    except Exception as e:
+        print(f"Error setting default commands: {e}")
     
     # Set admin commands for admins
     admin_ids = settings.admin_telegram_ids.split(",")
@@ -48,13 +58,19 @@ async def lifespan(app: FastAPI):
                     ],
                     scope=BotCommandScopeChat(chat_id=aid.strip())
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Error setting admin commands for {aid}: {e}")
 
-    # Start the bot polling in the background
-    asyncio.create_task(dp.start_polling(bot))
+    # Start the bot polling in the background with error logging
+    async def run_bot():
+        try:
+            print("Telegram bot polling started successfully!")
+            await dp.start_polling(bot)
+        except Exception as e:
+            print(f"Fatal error in Telegram bot polling: {e}")
+
+    asyncio.create_task(run_bot())
     yield
-    # We could close the bot session here if needed
 
 settings = Settings()
 

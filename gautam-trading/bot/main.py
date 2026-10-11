@@ -39,18 +39,21 @@ async def cmd_start(message: types.Message, state: FSMContext):
     last_name = message.from_user.last_name
     
     # 1. Upsert User
-    user_res = supabase.table("users").select("*").eq("telegram_id", telegram_id).execute()
-    if not user_res.data:
-        supabase.table("users").insert({
-            "telegram_id": telegram_id,
-            "username": username,
-            "first_name": first_name,
-            "last_name": last_name,
-            "source": "organic",
-            "status": "active"
-        }).execute()
-    else:
-        supabase.table("users").update({"status": "active"}).eq("telegram_id", telegram_id).execute()
+    try:
+        user_res = supabase.table("users").select("*").eq("telegram_id", telegram_id).execute()
+        if not user_res.data:
+            supabase.table("users").insert({
+                "telegram_id": telegram_id,
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
+                "source": "organic",
+                "status": "active"
+            }).execute()
+        else:
+            supabase.table("users").update({"status": "active"}).eq("telegram_id", telegram_id).execute()
+    except Exception as e:
+        print(f"Error upserting user: {e}")
 
     # 2. Sequential Messages
     await message.answer("👋 Welcome to Gautam Trading!\n\nWe're excited to have you here.")
@@ -75,15 +78,22 @@ async def cmd_start(message: types.Message, state: FSMContext):
     except Exception as e:
         print("Error sending reviews:", e)
         
-    # 4. Public Channel
-    settings_res = supabase.table("bot_settings").select("*").execute()
-    settings_dict = {s['setting_key']: s['setting_value'] for s in settings_res.data}
-    pub_link = settings_dict.get("public_channel_link", "https://t.me/GautamTrading")
+    # 4. Public Channel & Affiliate Settings
+    pub_link = "https://t.me/GautamTrading"
+    aff_link = "https://quotex.com"
+    try:
+        settings_res = supabase.table("bot_settings").select("*").execute()
+        if settings_res.data:
+            settings_dict = {s['setting_key']: s['setting_value'] for s in settings_res.data}
+            pub_link = settings_dict.get("public_channel_link", pub_link)
+            aff_link = settings_dict.get("affiliate_url", aff_link)
+    except Exception as e:
+        print(f"Error fetching settings: {e}")
+
     await message.answer(f"📢 Join our Free Public Channel for daily updates:\n{pub_link}")
     await asyncio.sleep(1)
     
     # 5. Quotex Affiliate
-    aff_link = settings_dict.get("affiliate_url", "https://quotex.com")
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ I Have Registered", callback_data="btn_registered")]
     ])
