@@ -1,5 +1,13 @@
 import asyncio
 import os
+import ssl
+
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -8,11 +16,14 @@ from supabase import create_client, Client
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+from pathlib import Path
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8922209875:AAHYofX2CaaL4hDRX28hwi2XJEzDyeYn098")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://trvwzyueymbsochgzeix.supabase.co")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRydnd6eXVleW1ic29jaGd6ZWl4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTczMTIzMiwiZXhwIjoyMTA3MzA3MjMyfQ.v6S2aMdUlID7eUjIT9LiL0Gz0JFlIJsGtUF8w8qP8Xk")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -306,6 +317,10 @@ async def process_broadcast(message: types.Message, state: FSMContext):
 # ================= RUNNER =================
 async def main():
     print("Starting bot...")
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        print(f"Webhook notice: {e}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
