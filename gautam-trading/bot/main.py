@@ -21,11 +21,38 @@ env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8922209875:AAHYofX2CaaL4hDRX28hwi2XJEzDyeYn098")
+# Parse one or more bot tokens (comma-separated or single)
+raw_tokens = os.getenv("BOT_TOKENS", os.getenv("BOT_TOKEN", "8922209875:AAHYofX2CaaL4hDRX28hwi2XJEzDyeYn098"))
+BOT_TOKENS = [t.strip() for t in raw_tokens.split(",") if t.strip()]
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://trvwzyueymbsochgzeix.supabase.co")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRydnd6eXVleW1ic29jaGd6ZWl4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTczMTIzMiwiZXhwIjoyMTA3MzA3MjMyfQ.v6S2aMdUlID7eUjIT9LiL0Gz0JFlIJsGtUF8w8qP8Xk")
 
-bot = Bot(token=BOT_TOKEN)
+from aiohttp import TCPConnector, ClientSession
+from aiogram.client.session.aiohttp import AiohttpSession
+
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
+class CustomSession(AiohttpSession):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._custom_session = None
+
+    async def create_session(self) -> ClientSession:
+        if self._custom_session is None or self._custom_session.closed:
+            connector = TCPConnector(ssl=ssl_context)
+            self._custom_session = ClientSession(connector=connector, json_serialize=self.json_dumps)
+        return self._custom_session
+
+    async def close(self) -> None:
+        if self._custom_session and not self._custom_session.closed:
+            await self._custom_session.close()
+        await super().close()
+
+# Create Bot instances for all configured tokens
+bots = [Bot(token=t, session=CustomSession()) for t in BOT_TOKENS]
+bot = bots[0]  # Primary bot reference
 dp = Dispatcher()
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
@@ -42,32 +69,51 @@ class BroadcastState(StatesGroup):
 
 # ================= USER FLOW =================
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext):
+async def cmd_start(message: types.Message, state: FSMContext, bot: Bot):
     await state.clear()
     telegram_id = str(message.from_user.id)
     username = message.from_user.username
     first_name = message.from_user.first_name
     last_name = message.from_user.last_name
     
-    # 1. Upsert User
+    # Get current bot info dynamically (name and username)
+    try:
+        bot_info = await bot.get_me()
+        bot_name = bot_info.first_name or "Gautam Trading"
+        bot_username = bot_info.username or "bot"
+    except Exception:
+        bot_name = "Gautam Trading"
+        bot_username = "bot"
+    
+    # 1. Upsert User (with bot_username tracked)
     try:
         user_res = supabase.table("users").select("*").eq("telegram_id", telegram_id).execute()
+        user_data = {
+            "telegram_id": telegram_id,
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "bot_username": bot_username,
+            "source": "organic",
+            "status": "active"
+        }
         if not user_res.data:
-            supabase.table("users").insert({
-                "telegram_id": telegram_id,
-                "username": username,
-                "first_name": first_name,
-                "last_name": last_name,
-                "source": "organic",
-                "status": "active"
-            }).execute()
+            try:
+                supabase.table("users").insert(user_data).execute()
+            except Exception:
+                # Fallback if bot_username column has not been added yet
+                user_data.pop("bot_username", None)
+                supabase.table("users").insert(user_data).execute()
         else:
-            supabase.table("users").update({"status": "active"}).eq("telegram_id", telegram_id).execute()
+            try:
+                supabase.table("users").update({"status": "active", "bot_username": bot_username}).eq("telegram_id", telegram_id).execute()
+            except Exception:
+                supabase.table("users").update({"status": "active"}).eq("telegram_id", telegram_id).execute()
     except Exception as e:
         print(f"Error upserting user: {e}")
 
-    # 2. Sequential Messages
-    await message.answer("👋 Welcome to Gautam Trading!\n\nWe're excited to have you here.")
+    # 2. Sequential Messages (Dynamic bot name!)
+    await message.answer(f"👋 Welcome to {bot_name}!\n\nWe're excited to have you here.")
     await asyncio.sleep(1)
     
     # 3. Reviews (Images & Videos)
@@ -96,8 +142,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
         settings_res = supabase.table("bot_settings").select("*").execute()
         if settings_res.data:
             settings_dict = {s['setting_key']: s['setting_value'] for s in settings_res.data}
-            pub_link = settings_dict.get("public_channel_link", pub_link)
-            aff_link = settings_dict.get("affiliate_url", aff_link)
+            pub_link = settings_dict.get(f"public_channel_link_{bot_username}", settings_dict.get("public_channel_link", pub_link))
+            aff_link = settings_dict.get(f"affiliate_url_{bot_username}", settings_dict.get("affiliate_url", aff_link))
     except Exception as e:
         print(f"Error fetching settings: {e}")
 
@@ -238,11 +284,18 @@ async def edit_vip(callback: types.CallbackQuery, state: FSMContext):
 @dp.message(AdminEditState.waiting_for_link)
 async def process_link_edit(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    key = data['setting_key']
+    key = data.get('setting_key', 'affiliate_url')
+    new_val = message.text.strip()
     
-    supabase.table("bot_settings").upsert({"setting_key": key, "setting_value": message.text.strip()}).execute()
-    
-    await message.answer(f"✅ Link updated successfully!")
+    try:
+        supabase.table("bot_settings").upsert(
+            {"setting_key": key, "setting_value": new_val}, 
+            on_conflict="setting_key"
+        ).execute()
+        await message.answer(f"✅ Link updated successfully!\n\n`{new_val}`", parse_mode="Markdown")
+    except Exception as e:
+        print(f"Error updating link: {e}")
+        await message.answer(f"⚠️ Error updating database: {e}")
     await state.clear()
 
 # Reviews
@@ -316,12 +369,14 @@ async def process_broadcast(message: types.Message, state: FSMContext):
 
 # ================= RUNNER =================
 async def main():
-    print("Starting bot...")
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-    except Exception as e:
-        print(f"Webhook notice: {e}")
-    await dp.start_polling(bot)
+    print(f"Starting {len(bots)} bot(s)...")
+    for b in bots:
+        try:
+            await b.delete_webhook(drop_pending_updates=True)
+        except Exception as e:
+            print(f"Webhook notice: {e}")
+    # Poll all bots simultaneously
+    await dp.start_polling(*bots)
 
 if __name__ == "__main__":
     asyncio.run(main())

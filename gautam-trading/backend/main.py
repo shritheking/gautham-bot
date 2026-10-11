@@ -26,52 +26,53 @@ import sys
 # We need to add the parent directory to sys.path if we are running from the backend directory, or just import using absolute path if we're running from the root.
 # Assuming the root is gautam-trading
 try:
-    from bot.main import bot, dp
+    from bot.main import bot, bots, dp
 except ImportError:
     import sys, os
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-    from bot.main import bot, dp
+    from bot.main import bot, bots, dp
 
 from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure any previous webhook is deleted so polling receives updates
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        print("Webhook cleared, starting polling mode.")
-    except Exception as e:
-        print(f"Error deleting webhook: {e}")
+    # Ensure any previous webhook is deleted for all bots
+    for b in bots:
+        try:
+            await b.delete_webhook(drop_pending_updates=True)
+            print("Webhook cleared for bot.")
+        except Exception as e:
+            print(f"Error deleting webhook: {e}")
 
-    # Set default commands for everyone
-    try:
-        await bot.set_my_commands(
-            [BotCommand(command="start", description="Start the bot")],
-            scope=BotCommandScopeDefault()
-        )
-    except Exception as e:
-        print(f"Error setting default commands: {e}")
-    
-    # Set admin commands for admins
-    admin_ids = settings.admin_telegram_ids.split(",")
-    for aid in admin_ids:
-        if aid.strip():
-            try:
-                await bot.set_my_commands(
-                    [
-                        BotCommand(command="start", description="Start the bot"),
-                        BotCommand(command="admin", description="Admin Dashboard")
-                    ],
-                    scope=BotCommandScopeChat(chat_id=aid.strip())
-                )
-            except Exception as e:
-                print(f"Error setting admin commands for {aid}: {e}")
+        # Set default commands for everyone
+        try:
+            await b.set_my_commands(
+                [BotCommand(command="start", description="Start the bot")],
+                scope=BotCommandScopeDefault()
+            )
+        except Exception as e:
+            print(f"Error setting default commands: {e}")
+        
+        # Set admin commands for admins
+        admin_ids = settings.admin_telegram_ids.split(",")
+        for aid in admin_ids:
+            if aid.strip():
+                try:
+                    await b.set_my_commands(
+                        [
+                            BotCommand(command="start", description="Start the bot"),
+                            BotCommand(command="admin", description="Admin Dashboard")
+                        ],
+                        scope=BotCommandScopeChat(chat_id=aid.strip())
+                    )
+                except Exception as e:
+                    print(f"Error setting admin commands for {aid}: {e}")
 
-    # Start the bot polling in the background with error logging
+    # Start multi-bot polling in the background with error logging
     async def run_bot():
         try:
-            print("Telegram bot polling started successfully!")
-            await dp.start_polling(bot)
+            print(f"Telegram polling started successfully for {len(bots)} bot(s)!")
+            await dp.start_polling(*bots)
         except Exception as e:
             print(f"Fatal error in Telegram bot polling: {e}")
 
