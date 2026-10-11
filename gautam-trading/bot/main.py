@@ -50,6 +50,8 @@ class CustomSession(AiohttpSession):
             await self._custom_session.close()
         await super().close()
 
+BOT_MODE = os.getenv("BOT_MODE", "trading").lower()  # Options: 'trading' or 'ai'
+
 # Create Bot instances for all configured tokens
 bots = [Bot(token=t, session=CustomSession()) for t in BOT_TOKENS]
 bot = bots[0]  # Primary bot reference
@@ -66,6 +68,9 @@ class AdminEditState(StatesGroup):
 
 class BroadcastState(StatesGroup):
     waiting_for_message = State()
+
+class AIState(StatesGroup):
+    waiting_for_prompt = State()
 
 # ================= USER FLOW =================
 @dp.message(CommandStart())
@@ -112,7 +117,25 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot):
     except Exception as e:
         print(f"Error upserting user: {e}")
 
-    # 2. Sequential Messages (Dynamic bot name!)
+    # 2. Check BOT_MODE: If switched to AI mode, display the AI Assistant interface
+    if BOT_MODE == "ai":
+        ai_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Ask AI Anything", callback_data="ai_ask")],
+            [InlineKeyboardButton(text="📝 Rewrite Text", callback_data="ai_rewrite"),
+             InlineKeyboardButton(text="📚 Summarize", callback_data="ai_summarize")],
+            [InlineKeyboardButton(text="✍️ Generate Ideas", callback_data="ai_generate"),
+             InlineKeyboardButton(text="✅ Fix Grammar", callback_data="ai_grammar")]
+        ])
+        await message.answer(
+            f"<b>👋 Welcome to {bot_name} AI Assistant!</b>\n\n"
+            f"Your personal AI-powered text and trading assistant.\n\n"
+            f"Choose an option below to get started:",
+            reply_markup=ai_menu,
+            parse_mode="HTML"
+        )
+        return
+
+    # 2. Sequential Messages for Trading Mode (Dynamic bot name!)
     await message.answer(f"👋 Welcome to {bot_name}!\n\nWe're excited to have you here.")
     await asyncio.sleep(1)
     
@@ -171,6 +194,58 @@ async def btn_registered(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("📝 Please enter your Quotex ID below:")
     await state.set_state(RegState.waiting_for_quotex_id)
     await callback.answer()
+
+# ================= AI MODE HANDLERS =================
+@dp.callback_query(F.data.startswith("ai_"))
+async def handle_ai_callbacks(callback: types.CallbackQuery, state: FSMContext):
+    action = callback.data.split("_")[1]
+    prompt_types = {
+        "ask": "💬 Please send the question you would like me to answer:",
+        "rewrite": "📝 Please send the text you want me to rewrite professionally:",
+        "summarize": "📚 Please send the text or article you want me to summarize:",
+        "generate": "✍️ Please describe the ideas or content you want me to generate:",
+        "grammar": "✅ Please send the sentence or paragraph to check and fix grammar:"
+    }
+    prompt_text = prompt_types.get(action, "Please send your text:")
+    await state.set_state(AIState.waiting_for_prompt)
+    await state.update_data(ai_action=action)
+    await callback.message.answer(prompt_text)
+    await callback.answer()
+
+@dp.message(AIState.waiting_for_prompt)
+async def process_ai_prompt(message: types.Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    action = data.get("ai_action", "ask")
+    user_input = message.text.strip()
+    
+    await message.answer("🤖 Thinking... please wait a moment.")
+    await state.clear()
+    
+    # Simple, high-speed OpenAI / AI completion if AI_API_KEY is configured
+    ai_api_key = os.getenv("AI_API_KEY", "")
+    if ai_api_key:
+        try:
+            import httpx
+            ai_base_url = os.getenv("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+            headers = {"Authorization": f"Bearer {ai_api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": f"You are a helpful AI assistant. Action requested: {action}."},
+                    {"role": "user", "content": user_input}
+                ]
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                res = await client.post(f"{ai_base_url}/chat/completions", headers=headers, json=payload)
+                result_json = res.json()
+                reply_text = result_json["choices"][0]["message"]["content"]
+                await message.answer(reply_text)
+                return
+        except Exception as e:
+            print(f"AI API error: {e}")
+            
+    # Clean fallback response if no AI API key is set
+    await message.answer(f"✨ <b>AI Result ({action.upper()}):</b>\n\nI processed your request for: <i>\"{user_input}\"</i>\n\n(To enable live ChatGPT responses, set <code>AI_API_KEY</code> in your environment variables).", parse_mode="HTML")
 
 @dp.message(RegState.waiting_for_quotex_id)
 async def process_quotex_id(message: types.Message, state: FSMContext):
