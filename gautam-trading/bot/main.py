@@ -272,18 +272,25 @@ async def process_quotex_id(message: types.Message, state: FSMContext):
     await message.answer("✅ Your Quotex ID has been submitted and is currently under review by our admin. Please wait.")
     await state.clear()
     
-    # Notify Admins
+    # Identify which bot received this registration
+    try:
+        this_bot_info = await message.bot.get_me()
+        this_bot_username = this_bot_info.username or "bot"
+    except Exception:
+        this_bot_username = "bot"
+
+    # Notify Admins — include bot_username in callback so approval goes back through correct bot
     admin_ids = os.getenv("ADMIN_TELEGRAM_IDS", "").split(",")
     for aid in admin_ids:
         if not aid.strip(): continue
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Approve", callback_data=f"approve_{telegram_id}")],
-            [InlineKeyboardButton(text="❌ Reject", callback_data=f"reject_{telegram_id}")]
+            [InlineKeyboardButton(text="✅ Approve", callback_data=f"approve_{telegram_id}_{this_bot_username}")],
+            [InlineKeyboardButton(text="❌ Reject", callback_data=f"reject_{telegram_id}_{this_bot_username}")]
         ])
         try:
-            await bot.send_message(
-                chat_id=aid.strip(), 
-                text=f"🔔 *New Registration!*\n\nUser: {message.from_user.full_name} (@{message.from_user.username or 'none'})\nQuotex ID: `{quotex_id}`",
+            await message.bot.send_message(
+                chat_id=aid.strip(),
+                text=f"🔔 *New Registration!*\n\nUser: {message.from_user.full_name} (@{message.from_user.username or 'none'})\nQuotex ID: `{quotex_id}`\nBot: @{this_bot_username}",
                 parse_mode="Markdown",
                 reply_markup=markup
             )
@@ -292,42 +299,68 @@ async def process_quotex_id(message: types.Message, state: FSMContext):
 
 # ================= ADMIN REGISTRATION CONTROLS =================
 @dp.callback_query(F.data.startswith("approve_"))
-async def admin_approve(callback: types.CallbackQuery, bot: Bot):
+async def admin_approve(callback: types.CallbackQuery):
     if str(callback.from_user.id) not in os.getenv("ADMIN_TELEGRAM_IDS", "").split(","): return
-    user_id = callback.data.split("_")[1]
-    
+    # callback_data format: approve_{telegram_id}_{bot_username}
+    parts = callback.data.split("_", 2)
+    user_id = parts[1]
+    target_bot_username = parts[2] if len(parts) > 2 else None
+
     supabase.table("users").update({"approval_status": "approved"}).eq("telegram_id", user_id).execute()
-    
-    # Fetch bot-specific VIP Channel link
-    try:
-        b_info = await bot.get_me()
-        b_user = b_info.username or "bot"
-    except Exception:
-        b_user = "bot"
-        
+
+    # Find the correct bot that the user registered through
+    target_bot = bots[0]  # fallback to Bot 1
+    if target_bot_username:
+        for b in bots:
+            try:
+                info = await b.get_me()
+                if info.username == target_bot_username:
+                    target_bot = b
+                    break
+            except Exception:
+                continue
+
+    b_user = target_bot_username or "bot"
     settings_res = supabase.table("bot_settings").select("*").execute()
     vip_link = "No VIP link set by admin."
     if settings_res.data:
         s_dict = {s['setting_key']: s['setting_value'] for s in settings_res.data}
         vip_link = s_dict.get(f"vip_channel_link_{b_user}", s_dict.get("vip_channel_link", vip_link))
-        
+
     try:
         await callback.message.edit_text(callback.message.text + "\n\n✅ **APPROVED**", parse_mode="Markdown")
-        await bot.send_message(user_id, f"🎉 Approved! Join the VIP Channel here: {vip_link}")
-    except: pass
+        await target_bot.send_message(user_id, f"🎉 Approved! Join the VIP Channel here: {vip_link}")
+    except Exception as e:
+        print(f"Approve send error: {e}")
     await callback.answer("User Approved")
 
 @dp.callback_query(F.data.startswith("reject_"))
-async def admin_reject(callback: types.CallbackQuery, bot: Bot):
+async def admin_reject(callback: types.CallbackQuery):
     if str(callback.from_user.id) not in os.getenv("ADMIN_TELEGRAM_IDS", "").split(","): return
-    user_id = callback.data.split("_")[1]
-    
+    # callback_data format: reject_{telegram_id}_{bot_username}
+    parts = callback.data.split("_", 2)
+    user_id = parts[1]
+    target_bot_username = parts[2] if len(parts) > 2 else None
+
     supabase.table("users").update({"approval_status": "rejected"}).eq("telegram_id", user_id).execute()
-    
+
+    # Find the correct bot that the user registered through
+    target_bot = bots[0]  # fallback to Bot 1
+    if target_bot_username:
+        for b in bots:
+            try:
+                info = await b.get_me()
+                if info.username == target_bot_username:
+                    target_bot = b
+                    break
+            except Exception:
+                continue
+
     try:
         await callback.message.edit_text(callback.message.text + "\n\n❌ **REJECTED**", parse_mode="Markdown")
-        await bot.send_message(user_id, "❌ Rejected! Please make sure you deposited at least $50 and try again.")
-    except: pass
+        await target_bot.send_message(user_id, "❌ Rejected! Please make sure you deposited at least $50 and try again.")
+    except Exception as e:
+        print(f"Reject send error: {e}")
     await callback.answer("User Rejected")
 
 # ================= ADMIN DASHBOARD =================
