@@ -71,13 +71,25 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     print(f"Error setting admin commands for {aid}: {e}")
 
-    # Start multi-bot polling in the background with error logging
+    # Start multi-bot polling with conflict-safe retry
+    # (Render zero-downtime deploys cause brief overlap where old+new instance both poll)
     async def run_bot():
-        try:
-            print(f"Telegram polling started successfully for {len(bots)} bot(s)!")
-            await dp.start_polling(*bots)
-        except Exception as e:
-            print(f"Fatal error in Telegram bot polling: {e}")
+        import random
+        max_retries = 20
+        for attempt in range(max_retries):
+            try:
+                print(f"Telegram polling started successfully for {len(bots)} bot(s)! (attempt {attempt+1})")
+                await dp.start_polling(*bots, drop_pending_updates=True)
+                break  # clean exit
+            except Exception as e:
+                err = str(e)
+                if "Conflict" in err or "terminated by other getUpdates" in err:
+                    wait = 3 + random.uniform(1, 3)
+                    print(f"Conflict detected (old instance still alive), retrying in {wait:.1f}s... (attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait)
+                else:
+                    print(f"Fatal error in Telegram bot polling: {e}")
+                    break
 
     asyncio.create_task(run_bot())
     yield

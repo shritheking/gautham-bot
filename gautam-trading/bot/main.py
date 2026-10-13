@@ -222,14 +222,15 @@ async def process_ai_prompt(message: types.Message, state: FSMContext, bot: Bot)
     await state.clear()
     
     # Simple, high-speed OpenAI / AI completion if AI_API_KEY is configured
-    ai_api_key = os.getenv("AI_API_KEY", "")
+    ai_api_key = os.getenv("AI_API_KEY", "").strip()
+    print(f"[AI DEBUG] AI_API_KEY set: {'YES (len='+str(len(ai_api_key))+')' if ai_api_key else 'NO'}")
     if ai_api_key:
         try:
             import httpx
             ai_base_url = os.getenv("AI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
             headers = {"Authorization": f"Bearer {ai_api_key}", "Content-Type": "application/json"}
             payload = {
-                "model": "gpt-3.5-turbo",
+                "model": os.getenv("AI_MODEL", "gpt-3.5-turbo"),
                 "messages": [
                     {"role": "system", "content": f"You are a helpful AI assistant. Action requested: {action}."},
                     {"role": "user", "content": user_input}
@@ -237,15 +238,24 @@ async def process_ai_prompt(message: types.Message, state: FSMContext, bot: Bot)
             }
             async with httpx.AsyncClient(timeout=30.0) as client:
                 res = await client.post(f"{ai_base_url}/chat/completions", headers=headers, json=payload)
+                print(f"[AI DEBUG] HTTP status: {res.status_code}")
                 result_json = res.json()
-                reply_text = result_json["choices"][0]["message"]["content"]
-                await message.answer(reply_text)
-                return
+                if res.status_code == 200 and "choices" in result_json:
+                    reply_text = result_json["choices"][0]["message"]["content"]
+                    await message.answer(reply_text)
+                    return
+                else:
+                    # Log the actual error from the AI API
+                    err_msg = result_json.get("error", {}).get("message", str(result_json))
+                    print(f"[AI DEBUG] API error response: {err_msg}")
+                    await message.answer(f"⚠️ AI API Error: {err_msg}")
+                    return
         except Exception as e:
-            print(f"AI API error: {e}")
-            
+            print(f"[AI DEBUG] Exception calling AI API: {e}")
+
     # Clean fallback response if no AI API key is set
     await message.answer(f"✨ <b>AI Result ({action.upper()}):</b>\n\nI processed your request for: <i>\"{user_input}\"</i>\n\n(To enable live ChatGPT responses, set <code>AI_API_KEY</code> in your environment variables).", parse_mode="HTML")
+
 
 @dp.message(RegState.waiting_for_quotex_id)
 async def process_quotex_id(message: types.Message, state: FSMContext):
