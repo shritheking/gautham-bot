@@ -394,8 +394,7 @@ async def cmd_admin(message: types.Message, bot: Bot):
         ])
         await message.answer(
             f"🛠 **{b_name} Admin Dashboard**\n\n"
-            f"🤖 Bot is running in **AI Assistant Mode**.\n\n"
-            f"To switch to Trading Mode, change `BOT_MODE=trading` in Render Environment.",
+            f"🤖 Bot is running in **AI Assistant Mode**.",
             reply_markup=markup,
             parse_mode="Markdown"
         )
