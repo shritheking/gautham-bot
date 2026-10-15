@@ -379,22 +379,47 @@ async def cmd_admin(message: types.Message, bot: Bot):
     if str(message.from_user.id) not in os.getenv("ADMIN_TELEGRAM_IDS", "").split(","):
         await message.answer("❌ This command is not accessible. You do not have admin permissions.")
         return
-    
+
     try:
         b_info = await bot.get_me()
-        b_name = b_info.first_name or "Trading Bot"
+        b_name = b_info.first_name or "Bot"
     except Exception:
-        b_name = "Trading Bot"
+        b_name = "Bot"
 
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Broadcast Message", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="🔗 Edit Affiliate Link", callback_data="edit_affiliate")],
-        [InlineKeyboardButton(text="📢 Edit Public Channel Link", callback_data="edit_public")],
-        [InlineKeyboardButton(text="👑 Edit VIP Channel Link", callback_data="edit_vip")],
-        [InlineKeyboardButton(text="📸 Add Review Image/Video", callback_data="add_review_img")],
-        [InlineKeyboardButton(text="🗑️ Clear This Bot's Reviews", callback_data="clear_reviews")]
-    ])
-    await message.answer(f"🛠 **{b_name} Admin Dashboard**\n\nSettings and actions you change here will apply specifically to this bot.", reply_markup=markup, parse_mode="Markdown")
+    if BOT_MODE == "ai":
+        # AI Mode Admin Dashboard — broadcast only
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Broadcast Message", callback_data="admin_broadcast")],
+            [InlineKeyboardButton(text="🤖 Current Mode: AI Assistant", callback_data="mode_info")]
+        ])
+        await message.answer(
+            f"🛠 **{b_name} Admin Dashboard**\n\n"
+            f"🤖 Bot is running in **AI Assistant Mode**.\n\n"
+            f"To switch to Trading Mode, change `BOT_MODE=trading` in Render Environment.",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+    else:
+        # Trading Mode Admin Dashboard — full controls
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Broadcast Message", callback_data="admin_broadcast")],
+            [InlineKeyboardButton(text="🔗 Edit Affiliate Link", callback_data="edit_affiliate")],
+            [InlineKeyboardButton(text="📢 Edit Public Channel Link", callback_data="edit_public")],
+            [InlineKeyboardButton(text="👑 Edit VIP Channel Link", callback_data="edit_vip")],
+            [InlineKeyboardButton(text="📸 Add Review Image/Video", callback_data="add_review_img")],
+            [InlineKeyboardButton(text="🗑️ Clear This Bot's Reviews", callback_data="clear_reviews")]
+        ])
+        await message.answer(
+            f"🛠 **{b_name} Admin Dashboard**\n\nSettings and actions you change here will apply specifically to this bot.",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+
+
+# Mode info button (shown in AI admin dashboard)
+@dp.callback_query(F.data == "mode_info")
+async def mode_info(callback: types.CallbackQuery):
+    await callback.answer(f"Current mode: {BOT_MODE.upper()}. Change BOT_MODE in Render to switch.", show_alert=True)
 
 # Edit Links (Saved specifically per bot)
 @dp.callback_query(F.data == "edit_affiliate")
